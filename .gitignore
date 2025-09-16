@@ -2,3 +2,8 @@
 /ProcessMonitorRepository/obj
 /ProcessMonitorWorkerService/bin
 /ProcessMonitorWorkerService/obj
+/.vs
+/ProcessManager/bin
+/ProcessManager/obj
+/ProcessMonitorDebugUI/bin
+/ProcessMonitorDebugUI/obj
