@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Useful for Windows Service publish -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Host references both API (controllers) and Blazor client -->
+    <ProjectReference Include="..\ProcessWatcherMonitor\ProcessWatcherMonitor.csproj" />
+    <ProjectReference Include="..\ProcessWatcherWebAPI\ProcessWatcherWebAPI.csproj" />
+    <ProjectReference Include="..\ProcessWatcherBlazorApp\ProcessWatcherBlazorApp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Run as Windows Service -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.*" />
+    <!-- Enables UseBlazorFrameworkFiles in the host -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="8.*" />
+    <!-- (Опционально) Swagger UI для разработки -->
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.*" />
+  </ItemGroup>
+</Project>

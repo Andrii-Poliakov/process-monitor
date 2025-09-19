@@ -1,0 +1,6 @@
+@ProcessWatcherWebAPI_HostAddress = http://localhost:5171
+
+GET {{ProcessWatcherWebAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

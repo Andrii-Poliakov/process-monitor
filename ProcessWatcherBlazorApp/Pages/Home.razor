@@ -1,0 +1,63 @@
+﻿@page "/"
+@inject HttpClient Http
+@using ProcessWatcherShared
+
+<PageTitle>Home</PageTitle>
+
+<button @onclick="GetApps">Get Apps</button>
+
+<p>
+
+    @if (apps is null || apps.Count == 0)
+    {
+        <p>No data</p>
+    }
+    else
+    {
+        <p>Received: @apps.Count</p>
+        <ul>
+            @foreach (var item in apps)
+            {
+                <li>@item.Name</li>
+            }
+        </ul>
+    }
+</p>
+
+<button @onclick="GetAppRuns">Get App Runs</button>
+
+<p>
+
+    @if (appRuns is null || appRuns.Count == 0)
+    {
+    <p>No data</p>
+    }
+    else
+    {
+    <p>Received: @appRuns.Count</p>
+    <ul>
+        @foreach (var item in appRuns)
+        {
+            <li>@item.Id | @item.AppId | @item.StartUtc | @item.EndUtc</li>
+        }
+    </ul>
+    }
+</p>
+
+@code {
+    private List<AppInfoDto>? apps;
+    private List<AppRunInfoDto>? appRuns;
+
+    private async Task GetApps()
+    {
+        var response = await Http.GetAsync("http://localhost:5080/api/get-apps");
+        apps = await response.Content.ReadFromJsonAsync<List<AppInfoDto>>();
+    }
+
+    private async Task GetAppRuns()
+    {
+        var response = await Http.GetAsync("http://localhost:5080/api/get-app-runs");
+        appRuns = await response.Content.ReadFromJsonAsync<List<AppRunInfoDto>>();
+    }
+
+}

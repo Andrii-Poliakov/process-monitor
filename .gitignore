@@ -7,3 +7,15 @@
 /ProcessManager/obj
 /ProcessMonitorDebugUI/bin
 /ProcessMonitorDebugUI/obj
+/ProcessWatcherBlazorApp/bin
+/ProcessWatcherBlazorApp/obj
+/ProcessWatcherMonitor/bin
+/ProcessWatcherMonitor/obj
+/ProcessWatcherRepository/bin
+/ProcessWatcherRepository/obj
+/ProcessWatcherShared/bin
+/ProcessWatcherShared/obj
+/ProcessWatcherWebAPI/bin
+/ProcessWatcherWebAPI/obj
+/ProcessWatcherWorkerService/bin
+/ProcessWatcherWorkerService/obj
