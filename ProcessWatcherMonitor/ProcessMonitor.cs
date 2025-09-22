@@ -2,6 +2,7 @@
 using ProcessMonitorRepository;
 using ProcessWatcherShared;
 using System.Diagnostics;
+using System.Linq;
 
 namespace ProcessWatcherMonitor
 {
@@ -12,33 +13,39 @@ namespace ProcessWatcherMonitor
         private readonly ILogger<ProcessMonitor> _logger;
         private readonly Repository _repository;
 
-        //private Dictionary<string, AppInfoDto> _appInfoDictionaryByPath = new();
+        private Dictionary<string, AppInfoDto> _appInfoDictionaryByPath = new();
+        private Dictionary<int, AppRunInfoDto> _appRunInfoDictionaryById = new();
 
         // The set of currently running AppIds
-        private readonly HashSet<int> _runningAppsId = new HashSet<int>();
+        //private readonly HashSet<int> _runningAppsId = new HashSet<int>();
 
         public ProcessMonitor(ILogger<ProcessMonitor> logger, Repository repository)
         {
             _logger = logger;
             _repository = repository;
 
-            //Initialize();
+            Initialize();
         }
 
 
-        //private void Initialize()
-        //{
-        //    _repository.GetAppsAsync().ContinueWith(t =>
-        //    {
-        //        if (t.IsFaulted)
-        //        {
-        //            _logger.LogError(t.Exception, "Failed to load apps from database.");
-        //            return;
-        //        }
-        //        var apps = t.Result;
-        //        _appInfoDictionaryByPath = apps.ToDictionary(a => a.FullPath, a => a);
-        //    });
-        //}
+        private void Initialize()
+        {
+            // Load all known apps from DB
+            _repository.GetAppsAsync().ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    _logger.LogError(t.Exception, "Failed to load apps from database.");
+                    return;
+                }
+                var apps = t.Result;
+                _appInfoDictionaryByPath = apps.ToDictionary(a => a.FullPath, a => a);
+            });
+
+
+            // Set all running sessions to status=1 (Closed)
+            _repository.SetAllAppRunsStatusAsync(0, 1).GetAwaiter().GetResult();
+        }
 
 
         public async Task ScanOnce(CancellationToken ct)
@@ -50,25 +57,64 @@ namespace ProcessWatcherMonitor
             {
                 if (ct.IsCancellationRequested) break;
 
+                int appId = 0;
+                if (_appInfoDictionaryByPath.TryGetValue(p.FullPath, out AppInfoDto appInfo)
+                    && appInfo != null)
+                {
+                    appId = appInfo.Id;
+                }
+                else
+                {
+                    // Registration App in DB
+                    appId = await _repository.UpsertAppAsync(p.Name, p.FullPath);
+                    appInfo = new AppInfoDto
+                    {
+                        Id = appId,
+                        Name = p.Name,
+                        FullPath = p.FullPath,
+                        CreatedAt = DateTime.UtcNow
+                    };
 
-                // Registration AppId
-                var appId = await _repository.UpsertAppAsync(p.Name, p.FullPath);
+                    // Cache it
+                    _appInfoDictionaryByPath[p.FullPath] = appInfo;
+                }
+
                 seenAppIds.Add(appId);
 
-                // If you did not previously consider the process to be running, open a session.
-                if (!_runningAppsId.Contains(appId))
+                AppRunInfoDto appRunInfo;
+
+                // We already have it as running, change end time to now
+                if ( _appRunInfoDictionaryById.TryGetValue(appId, out appRunInfo))
                 {
-                    await _repository.OpenRunAsync(appId, utcNow);
-                    _runningAppsId.Add(appId);
+                    await _repository.UpdateRunAsync(appId, utcNow);
+                    appRunInfo.EndUtc = utcNow;
+
+                }
+                else
+                {
+                    // If you did not previously consider the process to be running, open a session.
+                    var appRunId = await _repository.OpenRunAsync(appId, utcNow);
+                    //_runningAppsId.Add(appId);
+
+                    appRunInfo = new AppRunInfoDto
+                    {
+                        Id = appRunId,
+                        AppId = appId,
+                        StartUtc = utcNow,
+                        EndUtc = utcNow,
+                        Status = 0
+                    };
+                    _appRunInfoDictionaryById.Add(appId, appRunInfo);
                 }
             }
 
             // We are closing sessions for those who are missing.
-            var toClose = _runningAppsId.Except(seenAppIds).ToList();
+
+            var toClose = _appRunInfoDictionaryById.Keys.Except(seenAppIds).ToList();
             foreach (var appId in toClose)
             {
                 await _repository.CloseOpenRunAsync(appId, utcNow);
-                _runningAppsId.Remove(appId);
+                _appRunInfoDictionaryById.Remove(appId);
             }
         }
 

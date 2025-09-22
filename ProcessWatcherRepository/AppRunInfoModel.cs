@@ -12,6 +12,7 @@ namespace ProcessMonitorRepository
         public int AppId { get; set; }
         public string StartUtc { get; set; }
         public string EndUtc { get; set; }
+        public int Status { get; set; }
 
     }
 }

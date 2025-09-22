@@ -45,13 +45,34 @@ namespace ProcessMonitorRepository
                     Id        INTEGER PRIMARY KEY AUTOINCREMENT,
                     AppId     INTEGER NOT NULL,
                     StartUtc  TEXT NOT NULL,
-                    EndUtc    TEXT NULL,
+                    EndUtc    TEXT NOT NULL,
                     Status    INTEGER NOT NULL DEFAULT (0),
                     FOREIGN KEY (AppId) REFERENCES Apps(Id)
                 );
                 CREATE INDEX IF NOT EXISTS IX_AppRuns_AppId_Open ON AppRuns(AppId) WHERE EndUtc IS NULL;
                 ");
         }
+
+        /// <summary>
+        /// Updates the status of all application runs from a specified status to a new status.
+        /// </summary>
+        /// <remarks>This method performs an update operation on the database to change the status of all
+        /// application runs that match the specified <paramref name="fromStatus"/> to the specified <paramref
+        /// name="toStatus"/>. Ensure that the provided status values are valid and correspond to the application's
+        /// defined status codes.</remarks>
+        /// <param name="fromStatus">The current status of the application runs to be updated.</param>
+        /// <param name="toStatus">The new status to set for the application runs.</param>
+        /// <returns>A task that represents the asynchronous operation. The task result contains the number of rows affected by
+        /// the update.</returns>
+        public async Task<int> SetAllAppRunsStatusAsync(int fromStatus, int toStatus)
+        {
+            using var cn = Open();
+
+            return await cn.ExecuteAsync(
+                "UPDATE AppRuns SET Status = @toStatus WHERE Status = @fromStatus",
+                new { fromStatus, toStatus });
+        }
+
 
         public async Task<int> UpsertAppAsync(string name, string fullPath)
         {
@@ -78,19 +99,53 @@ namespace ProcessMonitorRepository
             return id.HasValue;
         }
 
+
         public async Task<int> OpenRunAsync(int appId, DateTime utcNow)
         {
             using var cn = Open();
-            return await cn.ExecuteScalarAsync<int>(
-                "INSERT INTO AppRuns (AppId, StartUtc) VALUES (@appId, @start); SELECT last_insert_rowid();",
+
+            // Update previous runs' status to closed
+            await cn.ExecuteAsync(
+                "UPDATE AppRuns SET Status = 1 WHERE AppId = @appId AND Status = 0;",
+                new { appId });
+
+            // Insert new run and get its Id
+            var newRunId = await cn.ExecuteScalarAsync<int>(
+                "INSERT INTO AppRuns (AppId, StartUtc, EndUtc) VALUES (@appId, @start, @start); SELECT last_insert_rowid();",
                 new { appId, start = utcNow.ToString("o") });
+
+            return newRunId;
+            //// Query the newly inserted row
+            //var row = await cn.QuerySingleAsync<AppRunInfoModel>(
+            //    @"SELECT Id, AppId, StartUtc, EndUtc, Status 
+            //      FROM AppRuns
+            //      WHERE Id = @id",
+            //    new { id = newRunId });
+
+            //// Map to DTO
+            //return new AppRunInfoDto
+            //{
+            //    Id = row.Id,
+            //    AppId = row.AppId,
+            //    StartUtc = DateTime.Parse(row.StartUtc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
+            //    EndUtc = row.EndUtc is null ? DateTime.MinValue : DateTime.Parse(row.EndUtc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
+            //    Status = row.Status
+            //};
+        }
+
+        public async Task<int> UpdateRunAsync(int appId, DateTime utcNow)
+        {
+            using var cn = Open();
+            return await cn.ExecuteScalarAsync<int>(
+                "UPDATE AppRuns SET EndUtc = @end WHERE AppId = @appId AND Status = 0; ",
+                new { appId, end = utcNow.ToString("o") });
         }
 
         public async Task<int> CloseOpenRunAsync(int appId, DateTime utcNow)
         {
             using var cn = Open();
             return await cn.ExecuteAsync(
-                "UPDATE AppRuns SET EndUtc = @end WHERE AppId = @appId AND EndUtc IS NULL",
+                "UPDATE AppRuns SET Status = 1, EndUtc = @end WHERE AppId = @appId AND Status = 0",
                 new { appId, end = utcNow.ToString("o") });
         }
 
@@ -133,7 +188,7 @@ namespace ProcessMonitorRepository
             using var cn = Open();
 
             var rows = await cn.QueryAsync<AppRunInfoModel>(
-                @"SELECT Id, AppId, StartUtc, EndUtc
+                @"SELECT Id, AppId, StartUtc, EndUtc, Status 
                   FROM AppRuns
                   ORDER BY Id desc
                   LIMIT 100");
@@ -151,7 +206,9 @@ namespace ProcessMonitorRepository
                     EndUtc = row.EndUtc is null ? DateTime.MinValue : DateTime.Parse(
                         row.EndUtc,
                         CultureInfo.InvariantCulture,
-                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal)
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
+                    Status = row.Status
+
                 }
                 )
                 .ToList();
