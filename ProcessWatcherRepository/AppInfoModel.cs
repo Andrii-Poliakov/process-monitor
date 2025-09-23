@@ -14,4 +14,15 @@ namespace ProcessMonitorRepository
         public string CreatedAt { get; set; }
 
     }
+
+
+    public class AppInfoExModel
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string FullPath { get; set; }
+        public string CreatedAt { get; set; }
+        public string LastUsedAt { get; set; }
+
+    }
 }

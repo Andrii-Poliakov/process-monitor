@@ -13,6 +13,8 @@ namespace ProcessWatcherMonitor
         private readonly ILogger<ProcessMonitor> _logger;
         private readonly Repository _repository;
 
+        private Dictionary<string, AppInfoDto> _appInfoBlockDictionaryByName = new();
+
         private Dictionary<string, AppInfoDto> _appInfoDictionaryByPath = new();
         private Dictionary<int, AppRunInfoDto> _appRunInfoDictionaryById = new();
 
@@ -53,7 +55,7 @@ namespace ProcessWatcherMonitor
             var seenAppIds = new HashSet<int>();
             var utcNow = DateTime.UtcNow;
 
-            foreach (var p in GetProcessList())
+            foreach (var p in SafeGetProcessesWithUi())
             {
                 if (ct.IsCancellationRequested) break;
 
@@ -118,73 +120,57 @@ namespace ProcessWatcherMonitor
             }
         }
 
-
-
-
-        public List<ProcessInfoDto> GetProcessList()
-        {
-            List<ProcessInfoDto> processInfoDtos = new List<ProcessInfoDto>();
-
-            var utcNow = DateTime.UtcNow;
-
-            foreach (var p in SafeGetProcessesWithUi())
-            {
-                var exePath = TryGetExePath(p);
-                if (exePath == null) continue;
-
-                var fullPath = NormalizePath(exePath);
-                var processName = p.ProcessName;
-
-                var dto = new ProcessInfoDto
-                {
-                    ProcessId = p.Id,
-                    Name = processName,
-                    FullPath = fullPath,
-                    StartDateTime = p.StartTime,
-                    EndDateTime = null
-                };
-                processInfoDtos.Add(dto);
-
-            }
-
-            return processInfoDtos;
-
-        }
-
-
-
-        /// <summary>
-        /// Retrieves a collection of processes that have a user interface (UI) by filtering processes with a valid main
-        /// window handle and a non-empty window title.
-        /// </summary>
-        /// <remarks>This method safely enumerates all processes on the system and filters out those that
-        /// do not have a user interface. Processes without a valid main window handle or with an empty or 
-        /// whitespace-only window title are excluded. If access to a process is denied, it is skipped.</remarks>
-        /// <returns>An enumerable collection of <see cref="Process"/> objects representing processes with a user interface.</returns>
-        private static IEnumerable<Process> SafeGetProcessesWithUi()
+        private static IEnumerable<ProcessInfoDto> SafeGetProcessesWithUi()
         {
             Process[] all;
             try { all = Process.GetProcesses(); }
             catch { yield break; }
 
-            foreach (var p in all)
+            foreach (var process in all)
             {
-                IntPtr h = IntPtr.Zero;
-                string title = null;
-
-                try
+                using (process)
                 {
-                    h = p.MainWindowHandle;
-                    title = p.MainWindowTitle;
-                }
-                catch { /* Skip if no access */ }
+                    IntPtr h = IntPtr.Zero;
+                    string title = null;
 
-                if (h != IntPtr.Zero && !string.IsNullOrWhiteSpace(title))
-                    yield return p;
-                else
-                    p.Dispose();
+                    try
+                    {
+                        h = process.MainWindowHandle;
+                        title = process.MainWindowTitle;
+                    }
+                    catch
+                    {
+                        continue; /* Skip if no access */
+                    }
+
+                    if (h == IntPtr.Zero || string.IsNullOrWhiteSpace(title))
+                    {
+                        continue;
+                    }
+
+                    var exePath = TryGetExePath(process);
+                    if (exePath == null)
+                    {
+                        continue;
+                    }
+
+                    yield return new ProcessInfoDto
+                    {
+                        ProcessId = process.Id,
+                        Name = process.ProcessName,
+                        FullPath = NormalizePath(exePath),
+                        StartDateTime = process.StartTime,
+                        EndDateTime = null
+                    };
+                }
             }
         }
+
+
+
+
+
+
 
         private static string TryGetExePath(Process p)
         {

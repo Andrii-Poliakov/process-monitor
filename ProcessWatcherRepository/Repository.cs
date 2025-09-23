@@ -36,34 +36,52 @@ namespace ProcessMonitorRepository
             using var cn = Open();
             await cn.ExecuteAsync(@"
                 CREATE TABLE IF NOT EXISTS Apps (
-                    Id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    Name      TEXT NOT NULL,
-                    FullPath  TEXT NOT NULL UNIQUE,
-                    CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+                    Id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Name            TEXT NOT NULL,
+                    FullPath        TEXT NOT NULL UNIQUE,
+                    CreatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
                 );
                 CREATE TABLE IF NOT EXISTS AppRuns (
-                    Id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    AppId     INTEGER NOT NULL,
-                    StartUtc  TEXT NOT NULL,
-                    EndUtc    TEXT NOT NULL,
-                    Status    INTEGER NOT NULL DEFAULT (0),
+                    Id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    AppId           INTEGER NOT NULL,
+                    StartUtc        TEXT NOT NULL,
+                    EndUtc          TEXT NOT NULL,
+                    Status          INTEGER NOT NULL DEFAULT (0),
                     FOREIGN KEY (AppId) REFERENCES Apps(Id)
                 );
-                CREATE INDEX IF NOT EXISTS IX_AppRuns_AppId_Open ON AppRuns(AppId) WHERE EndUtc IS NULL;
+                CREATE INDEX IF NOT EXISTS IX_AppRuns_AppId_Open ON AppRuns(AppId);
+
+                CREATE TABLE IF NOT EXISTS BlockedApps (
+                    Id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    BlockType       INTEGER NOT NULL DEFAULT (0),
+                    BlockValue      TEXT NOT NULL,
+                    CreatedAt       TEXT NOT NULL DEFAULT (datetime('now')),                    
+                    UpdatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS AppRunStatuses (
+                    Id              INTEGER PRIMARY KEY,
+                    Name            TEXT NOT NULL
+                );
+
+                INSERT OR IGNORE INTO AppRunStatuses (Id, Name) VALUES (0, 'Unknown');                
+                INSERT OR IGNORE INTO AppRunStatuses (Id, Name) VALUES (1, 'Opened');
+                INSERT OR IGNORE INTO AppRunStatuses (Id, Name) VALUES (2, 'Closed');
+
+                CREATE TABLE IF NOT EXISTS BlockTypes (
+                    Id              INTEGER PRIMARY KEY,
+                    Name            TEXT NOT NULL
+                );
+
+                INSERT OR IGNORE INTO BlockTypes (Id, Name) VALUES (0, 'Unknown');
+                INSERT OR IGNORE INTO BlockTypes (Id, Name) VALUES (1, 'FullPath');
+                INSERT OR IGNORE INTO BlockTypes (Id, Name) VALUES (2, 'ProcessName');
+                INSERT OR IGNORE INTO BlockTypes (Id, Name) VALUES (3, 'WindowTitle');
+                INSERT OR IGNORE INTO BlockTypes (Id, Name) VALUES (4, 'AppId');
+
                 ");
         }
 
-        /// <summary>
-        /// Updates the status of all application runs from a specified status to a new status.
-        /// </summary>
-        /// <remarks>This method performs an update operation on the database to change the status of all
-        /// application runs that match the specified <paramref name="fromStatus"/> to the specified <paramref
-        /// name="toStatus"/>. Ensure that the provided status values are valid and correspond to the application's
-        /// defined status codes.</remarks>
-        /// <param name="fromStatus">The current status of the application runs to be updated.</param>
-        /// <param name="toStatus">The new status to set for the application runs.</param>
-        /// <returns>A task that represents the asynchronous operation. The task result contains the number of rows affected by
-        /// the update.</returns>
         public async Task<int> SetAllAppRunsStatusAsync(int fromStatus, int toStatus)
         {
             using var cn = Open();
@@ -90,16 +108,6 @@ namespace ProcessMonitorRepository
                 new { name, fullPath });
         }
 
-        public async Task<bool> HasOpenRunAsync(int appId)
-        {
-            using var cn = Open();
-            var id = await cn.ExecuteScalarAsync<int?>(
-                "SELECT Id FROM AppRuns WHERE AppId = @appId AND EndUtc IS NULL LIMIT 1",
-                new { appId });
-            return id.HasValue;
-        }
-
-
         public async Task<int> OpenRunAsync(int appId, DateTime utcNow)
         {
             using var cn = Open();
@@ -115,28 +123,12 @@ namespace ProcessMonitorRepository
                 new { appId, start = utcNow.ToString("o") });
 
             return newRunId;
-            //// Query the newly inserted row
-            //var row = await cn.QuerySingleAsync<AppRunInfoModel>(
-            //    @"SELECT Id, AppId, StartUtc, EndUtc, Status 
-            //      FROM AppRuns
-            //      WHERE Id = @id",
-            //    new { id = newRunId });
-
-            //// Map to DTO
-            //return new AppRunInfoDto
-            //{
-            //    Id = row.Id,
-            //    AppId = row.AppId,
-            //    StartUtc = DateTime.Parse(row.StartUtc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
-            //    EndUtc = row.EndUtc is null ? DateTime.MinValue : DateTime.Parse(row.EndUtc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
-            //    Status = row.Status
-            //};
         }
 
         public async Task<int> UpdateRunAsync(int appId, DateTime utcNow)
         {
             using var cn = Open();
-            return await cn.ExecuteScalarAsync<int>(
+            return await cn.ExecuteAsync(
                 "UPDATE AppRuns SET EndUtc = @end WHERE AppId = @appId AND Status = 0; ",
                 new { appId, end = utcNow.ToString("o") });
         }
@@ -172,6 +164,40 @@ namespace ProcessMonitorRepository
                                 CultureInfo.InvariantCulture,
                                 DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal)
                         }
+                    )
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+
+                throw;
+            }
+
+        }
+
+        public async Task<List<AppInfoDto>> GetAppsExAsync()
+        {
+            try
+            {
+                using var cn = Open();
+
+                var rows = await cn.QueryAsync<AppInfoModel>(
+                    @"SELECT Id, Name, FullPath, CreatedAt
+                      FROM Apps
+                      ORDER BY Name COLLATE NOCASE, Id");
+
+                return rows
+                    .Select(static row => new AppInfoDto()
+                    {
+
+                        Id = row.Id,
+                        Name = row.Name,
+                        FullPath = row.FullPath,
+                        CreatedAt = DateTime.Parse(
+                                row.CreatedAt,
+                                CultureInfo.InvariantCulture,
+                                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal)
+                    }
                     )
                     .ToList();
             }
