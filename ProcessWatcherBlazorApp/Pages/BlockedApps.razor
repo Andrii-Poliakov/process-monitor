@@ -1,0 +1,322 @@
+﻿@page "/blocked-apps"
+@inject HttpClient Http
+@using ProcessWatcherShared
+
+<PageTitle>Blocked Apps</PageTitle>
+
+<h3>Blocked Apps</h3>
+
+@if (!string.IsNullOrWhiteSpace(errorMessage))
+{
+    <div class="alert alert-danger" role="alert">@errorMessage</div>
+}
+
+@if (isLoading)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Add blocked app</h5>
+            <div class="row g-3 align-items-end">
+                <div class="col-sm-3">
+                    <label class="form-label" for="new-block-type">Block type</label>
+                    <select id="new-block-type" class="form-select" @bind="newBlockedApp.BlockType" disabled="@(blockTypes.Count == 0 || isSubmitting)">
+                        @foreach (var type in blockTypes)
+                        {
+                            <option value="@type.Id">@type.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-sm-5">
+                    <label class="form-label" for="new-block-value">Block value</label>
+                    <input id="new-block-value" class="form-control" @bind="newBlockedApp.BlockValue" disabled="@isSubmitting" />
+                </div>
+                <div class="col-sm-2">
+                    <button class="btn btn-primary" @onclick="CreateBlockedAppAsync" disabled="@(!CanSubmitNew || isSubmitting || blockTypes.Count == 0)">
+                        Add
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    if (blockedApps.Count == 0)
+    {
+        <p>No blocked applications configured.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th scope="col">Id</th>
+                        <th scope="col">Block type</th>
+                        <th scope="col">Block value</th>
+                        <th scope="col">Created</th>
+                        <th scope="col">Updated</th>
+                        <th scope="col" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in blockedApps)
+                    {
+                        if (editingId == item.Id)
+                        {
+                            <tr>
+                                <td>@item.Id</td>
+                                <td>
+                                    <select class="form-select" @bind="editBlockedApp.BlockType" disabled="@isSubmitting">
+                                        @foreach (var type in blockTypes)
+                                        {
+                                            <option value="@type.Id">@type.Name</option>
+                                        }
+                                    </select>
+                                </td>
+                                <td>
+                                    <input class="form-control" @bind="editBlockedApp.BlockValue" disabled="@isSubmitting" />
+                                </td>
+                                <td>@item.CreatedAt.ToLocalTime().ToString("g")</td>
+                                <td>@item.UpdatedAt.ToLocalTime().ToString("g")</td>
+                                <td class="text-end">
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-success" @onclick="() => SaveEditAsync(item.Id)" disabled="@(!CanSubmitEdit || isSubmitting)">Save</button>
+                                        <button class="btn btn-secondary" @onclick="CancelEdit" disabled="@isSubmitting">Cancel</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            <tr>
+                                <td>@item.Id</td>
+                                <td>@GetBlockTypeName(item.BlockType)</td>
+                                <td>@item.BlockValue</td>
+                                <td>@item.CreatedAt.ToLocalTime().ToString("g")</td>
+                                <td>@item.UpdatedAt.ToLocalTime().ToString("g")</td>
+                                <td class="text-end">
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary" @onclick="() => BeginEdit(item)" disabled="@isSubmitting">Edit</button>
+                                        <button class="btn btn-outline-danger" @onclick="() => DeleteBlockedAppAsync(item.Id)" disabled="@isSubmitting">Delete</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private const string ApiBaseUrl = "http://localhost:5080/api";
+    private List<BlockedAppDto> blockedApps = new();
+    private List<BlockTypeDto> blockTypes = new();
+    private BlockedAppUpsertRequest newBlockedApp = new();
+    private BlockedAppUpsertRequest editBlockedApp = new();
+    private int? editingId;
+    private string? errorMessage;
+    private bool isLoading = true;
+    private bool isSubmitting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        errorMessage = null;
+        isLoading = true;
+
+        try
+        {
+            blockTypes = await Http.GetFromJsonAsync<List<BlockTypeDto>>($"{ApiBaseUrl}/block-types") ?? new List<BlockTypeDto>();
+            blockedApps = await Http.GetFromJsonAsync<List<BlockedAppDto>>($"{ApiBaseUrl}/blocked-apps") ?? new List<BlockedAppDto>();
+            SortBlockedApps();
+            EnsureNewBlockedAppDefaults();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load blocked apps: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void SortBlockedApps()
+    {
+        blockedApps = blockedApps
+            .OrderBy(app => app.BlockValue, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(app => app.Id)
+            .ToList();
+    }
+
+    private bool CanSubmitNew => !string.IsNullOrWhiteSpace(newBlockedApp.BlockValue);
+
+    private bool CanSubmitEdit => !string.IsNullOrWhiteSpace(editBlockedApp.BlockValue);
+
+    private void EnsureNewBlockedAppDefaults()
+    {
+        if (blockTypes.Count > 0 && !blockTypes.Any(t => t.Id == newBlockedApp.BlockType))
+        {
+            newBlockedApp.BlockType = blockTypes[0].Id;
+        }
+        else if (blockTypes.Count == 0)
+        {
+            newBlockedApp.BlockType = 0;
+        }
+    }
+
+    private async Task CreateBlockedAppAsync()
+    {
+        if (!CanSubmitNew || blockTypes.Count == 0)
+        {
+            return;
+        }
+
+        errorMessage = null;
+        isSubmitting = true;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"{ApiBaseUrl}/blocked-apps", newBlockedApp);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var created = await response.Content.ReadFromJsonAsync<BlockedAppDto>();
+                if (created is not null)
+                {
+                    blockedApps.Add(created);
+                    SortBlockedApps();
+                    newBlockedApp = new BlockedAppUpsertRequest { BlockType = created.BlockType };
+                    EnsureNewBlockedAppDefaults();
+                }
+            }
+            else
+            {
+                errorMessage = $"Failed to add blocked app ({response.StatusCode}).";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to add blocked app: {ex.Message}";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private void BeginEdit(BlockedAppDto item)
+    {
+        editingId = item.Id;
+        editBlockedApp = new BlockedAppUpsertRequest
+        {
+            BlockType = item.BlockType,
+            BlockValue = item.BlockValue
+        };
+        errorMessage = null;
+    }
+
+    private void CancelEdit()
+    {
+        editingId = null;
+        editBlockedApp = new BlockedAppUpsertRequest();
+    }
+
+    private async Task SaveEditAsync(int id)
+    {
+        if (editingId != id || !CanSubmitEdit)
+        {
+            return;
+        }
+
+        errorMessage = null;
+        isSubmitting = true;
+
+        try
+        {
+            var response = await Http.PutAsJsonAsync($"{ApiBaseUrl}/blocked-apps/{id}", editBlockedApp);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var updated = await response.Content.ReadFromJsonAsync<BlockedAppDto>();
+                if (updated is not null)
+                {
+                    var index = blockedApps.FindIndex(app => app.Id == id);
+                    if (index >= 0)
+                    {
+                        blockedApps[index] = updated;
+                        SortBlockedApps();
+                    }
+                    CancelEdit();
+                }
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                errorMessage = "The blocked app no longer exists.";
+                await LoadDataAsync();
+            }
+            else
+            {
+                errorMessage = $"Failed to update blocked app ({response.StatusCode}).";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to update blocked app: {ex.Message}";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task DeleteBlockedAppAsync(int id)
+    {
+        errorMessage = null;
+        isSubmitting = true;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"{ApiBaseUrl}/blocked-apps/{id}");
+
+            if (response.IsSuccessStatusCode)
+            {
+                blockedApps.RemoveAll(app => app.Id == id);
+                if (editingId == id)
+                {
+                    CancelEdit();
+                }
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                blockedApps.RemoveAll(app => app.Id == id);
+            }
+            else
+            {
+                errorMessage = $"Failed to delete blocked app ({response.StatusCode}).";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to delete blocked app: {ex.Message}";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private string GetBlockTypeName(int blockType)
+    {
+        return blockTypes.FirstOrDefault(t => t.Id == blockType)?.Name ?? $"Type {blockType}";
+    }
+}

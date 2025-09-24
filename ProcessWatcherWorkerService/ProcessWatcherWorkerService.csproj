@@ -22,6 +22,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.*" />
     <!-- Enables UseBlazorFrameworkFiles in the host -->
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="8.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.EventLog" Version="9.0.9" />
     <!-- (Опционально) Swagger UI для разработки -->
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.*" />
   </ItemGroup>

@@ -34,6 +34,16 @@ namespace ProcessWatcherWorkerService
 
                 try
                 {
+                    await _processMonitor.BlockOnce(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "BlockOnce error");
+                }
+
+
+                try
+                {
                     await Task.Delay(_period, stoppingToken);
                 }
                 catch (TaskCanceledException) { /* graceful exit */ }

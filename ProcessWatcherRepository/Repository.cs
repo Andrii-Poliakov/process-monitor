@@ -240,5 +240,126 @@ namespace ProcessMonitorRepository
                 .ToList();
         }
 
+
+        public async Task<IReadOnlyList<BlockedAppDto>> GetBlockedAppsAsync()
+        {
+            using var cn = Open();
+
+            var rows = await cn.QueryAsync<BlockedAppModel>(
+                @"SELECT ba.Id,
+                         ba.BlockType,
+                         COALESCE(bt.Name, 'Unknown') AS BlockTypeName,
+                         ba.BlockValue,
+                         ba.CreatedAt,
+                         ba.UpdatedAt
+                  FROM BlockedApps AS ba
+                  LEFT JOIN BlockTypes AS bt ON ba.BlockType = bt.Id
+                  ORDER BY ba.BlockValue COLLATE NOCASE, ba.Id;");
+
+            return rows
+                .Select(static row => MapBlockedApp(row))
+                .ToList();
+        }
+
+        public async Task<IReadOnlyList<BlockTypeDto>> GetBlockTypesAsync()
+        {
+            using var cn = Open();
+
+            var rows = await cn.QueryAsync<BlockTypeModel>(
+                @"SELECT Id,
+                         Name
+                  FROM BlockTypes
+                  ORDER BY Id;");
+
+            return rows
+                .Select(static row => new BlockTypeDto
+                {
+                    Id = row.Id,
+                    Name = row.Name
+                })
+                .ToList();
+        }
+
+        public async Task<BlockedAppDto?> AddBlockedAppAsync(int blockType, string blockValue)
+        {
+            using var cn = Open();
+
+            var newId = await cn.ExecuteScalarAsync<long>(
+                @"INSERT INTO BlockedApps (BlockType, BlockValue)
+                  VALUES (@blockType, @blockValue);
+                  SELECT last_insert_rowid();",
+                new { blockType, blockValue });
+
+            return await GetBlockedAppByIdAsync(cn, (int)newId);
+        }
+
+        public async Task<BlockedAppDto?> UpdateBlockedAppAsync(int id, int blockType, string blockValue)
+        {
+            using var cn = Open();
+
+            var affected = await cn.ExecuteAsync(
+                @"UPDATE BlockedApps
+                  SET BlockType = @blockType,
+                      BlockValue = @blockValue,
+                      UpdatedAt = datetime('now')
+                  WHERE Id = @id;",
+                new { id, blockType, blockValue });
+
+            if (affected == 0)
+            {
+                return null;
+            }
+
+            return await GetBlockedAppByIdAsync(cn, id);
+        }
+
+        public async Task<bool> DeleteBlockedAppAsync(int id)
+        {
+            using var cn = Open();
+
+            var affected = await cn.ExecuteAsync(
+                "DELETE FROM BlockedApps WHERE Id = @id;",
+                new { id });
+
+            return affected > 0;
+        }
+
+        private static BlockedAppDto MapBlockedApp(BlockedAppModel row)
+        {
+            return new BlockedAppDto
+            {
+                Id = row.Id,
+                BlockType = row.BlockType,
+                BlockTypeName = row.BlockTypeName,
+                BlockValue = row.BlockValue,
+                CreatedAt = DateTime.Parse(
+                    row.CreatedAt,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
+                UpdatedAt = DateTime.Parse(
+                    row.UpdatedAt,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal)
+            };
+        }
+
+        private static async Task<BlockedAppDto?> GetBlockedAppByIdAsync(IDbConnection cn, int id)
+        {
+            var model = await cn.QuerySingleOrDefaultAsync<BlockedAppModel>(
+                @"SELECT ba.Id,
+                         ba.BlockType,
+                         COALESCE(bt.Name, 'Unknown') AS BlockTypeName,
+                         ba.BlockValue,
+                         ba.CreatedAt,
+                         ba.UpdatedAt
+                  FROM BlockedApps AS ba
+                  LEFT JOIN BlockTypes AS bt ON ba.BlockType = bt.Id
+                  WHERE ba.Id = @id;",
+                new { id });
+
+            return model is null ? null : MapBlockedApp(model);
+        }
+
+
     }
 }

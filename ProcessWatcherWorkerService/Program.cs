@@ -9,6 +9,8 @@ using ProcessWatcherWorkerService;
 using System;
 using System.Diagnostics;
 using System.IO;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 const int Port = 5080; // set port in code as requested
 
@@ -36,6 +38,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Run as Windows Service when started by SCM
 builder.Host.UseWindowsService(options => options.ServiceName = "ProcessWatcher");
+builder.Logging.AddEventLog(settings => settings.SourceName = "ProcessWatcher");
 
 // Kestrel + explicit URL (no appsettings.json for port)
 builder.WebHost.UseKestrel()

@@ -120,6 +120,59 @@ namespace ProcessWatcherMonitor
             }
         }
 
+        public async Task BlockOnce(CancellationToken ct)
+        {
+
+            var blockedApps = await _repository.GetBlockedAppsAsync();
+
+            foreach (var blockItem in blockedApps)
+            {
+
+                if (blockItem.BlockType == 4)
+                {
+                    foreach (var runItem in _appRunInfoDictionaryById)
+                    {
+                        if (ct.IsCancellationRequested) break;
+
+                        if (blockItem.BlockValue == runItem.Value.AppId.ToString())
+                        {
+
+                            AppInfoDto appInfoToBlock = _appInfoDictionaryByPath.Values
+                                .FirstOrDefault(a => a.Id == runItem.Value.AppId);
+
+                            if (appInfoToBlock != null)
+                            {
+                                try
+                                {
+                                    var process = Process.GetProcessesByName(appInfoToBlock.Name);
+                                    foreach (var p in process)
+                                    {
+                                        try
+                                        {
+                                            p.Kill();
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            _logger.LogError(ex, $"Failed to kill process with AppId {runItem.Value.AppId}");
+                                        }
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, $"Failed to kill process with AppId {runItem.Value.AppId}");
+                                }
+                            }
+                        }
+
+                    }
+                }
+            }
+
+
+
+
+        }
+
         private static IEnumerable<ProcessInfoDto> SafeGetProcessesWithUi()
         {
             Process[] all;

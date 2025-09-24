@@ -18,7 +18,7 @@
         <ul>
             @foreach (var item in apps)
             {
-                <li>@item.Name</li>
+            <li>@item.Id | @item.Name | @item.CreatedAt | @item.FullPath</li>
             }
         </ul>
     }
