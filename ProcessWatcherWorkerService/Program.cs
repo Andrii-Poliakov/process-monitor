@@ -11,6 +11,10 @@ using System.Diagnostics;
 using System.IO;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Serilog;
+using Serilog.Sinks.SystemConsole;
+using Serilog.Sinks.File;
+
 
 const int Port = 5080; // set port in code as requested
 
@@ -23,8 +27,8 @@ if (Environment.UserInteractive &&
 
     try
     {
-        //Process.Start(new ProcessStartInfo($"http://localhost:{Port}/swagger") { UseShellExecute = true });
-        //Process.Start(new ProcessStartInfo($"http://localhost:{Port}") { UseShellExecute = true });
+       //Process.Start(new ProcessStartInfo($"http://localhost:{Port}/swagger") { UseShellExecute = true });
+       //Process.Start(new ProcessStartInfo($"http://localhost:{Port}") { UseShellExecute = true });
     }
     catch { /* игнорируем ошибки открытия браузера */ }
 }
@@ -39,6 +43,13 @@ var builder = WebApplication.CreateBuilder(args);
 // Run as Windows Service when started by SCM
 builder.Host.UseWindowsService(options => options.ServiceName = "ProcessWatcher");
 builder.Logging.AddEventLog(settings => settings.SourceName = "ProcessWatcher");
+builder.Host.UseSerilog((context, services, configuration) =>
+{
+    configuration
+        .WriteTo.Console()
+        .WriteTo.File("Logs/myapp-.txt", rollingInterval: RollingInterval.Day)
+        .ReadFrom.Configuration(context.Configuration);
+});
 
 // Kestrel + explicit URL (no appsettings.json for port)
 builder.WebHost.UseKestrel()

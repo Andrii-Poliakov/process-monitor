@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using ProcessMonitorRepository;
 using ProcessWatcherShared;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 
@@ -16,7 +17,7 @@ namespace ProcessWatcherMonitor
         private Dictionary<string, AppInfoDto> _appInfoBlockDictionaryByName = new();
 
         private Dictionary<string, AppInfoDto> _appInfoDictionaryByPath = new();
-        private Dictionary<int, AppRunInfoDto> _appRunInfoDictionaryById = new();
+        private Dictionary<int, (AppRunInfoDto, AppInfoDto)> _appRunInfoDictionaryById = new();
 
         // The set of currently running AppIds
         //private readonly HashSet<int> _runningAppsId = new HashSet<int>();
@@ -54,9 +55,13 @@ namespace ProcessWatcherMonitor
         {
             var seenAppIds = new HashSet<int>();
             var utcNow = DateTime.UtcNow;
+            _logger.LogInformation("ScanOnce Start");
 
-            foreach (var p in SafeGetProcessesWithUi())
+            var processes = SafeGetProcessesWithUi().ToList();
+            int addCount = 0;
+            foreach (var p in processes)
             {
+                
                 if (ct.IsCancellationRequested) break;
 
                 int appId = 0;
@@ -83,13 +88,13 @@ namespace ProcessWatcherMonitor
 
                 seenAppIds.Add(appId);
 
-                AppRunInfoDto appRunInfo;
+                (AppRunInfoDto appRunInfo, AppInfoDto appInfo) appRunInfoTupl;
 
                 // We already have it as running, change end time to now
-                if ( _appRunInfoDictionaryById.TryGetValue(appId, out appRunInfo))
+                if ( _appRunInfoDictionaryById.TryGetValue(appId, out appRunInfoTupl))
                 {
                     await _repository.UpdateRunAsync(appId, utcNow);
-                    appRunInfo.EndUtc = utcNow;
+                    appRunInfoTupl.appRunInfo.EndUtc = utcNow;
 
                 }
                 else
@@ -98,15 +103,19 @@ namespace ProcessWatcherMonitor
                     var appRunId = await _repository.OpenRunAsync(appId, utcNow);
                     //_runningAppsId.Add(appId);
 
-                    appRunInfo = new AppRunInfoDto
-                    {
-                        Id = appRunId,
-                        AppId = appId,
-                        StartUtc = utcNow,
-                        EndUtc = utcNow,
-                        Status = 0
-                    };
-                    _appRunInfoDictionaryById.Add(appId, appRunInfo);
+                    appRunInfoTupl = (
+                        new AppRunInfoDto
+                        {
+                            Id = appRunId,
+                            AppId = appId,
+                            StartUtc = utcNow,
+                            EndUtc = utcNow,
+                            Status = 0
+                        }, 
+                        appInfo);
+
+                    addCount++;
+                    _appRunInfoDictionaryById.Add(appId, appRunInfoTupl);
                 }
             }
 
@@ -118,105 +127,172 @@ namespace ProcessWatcherMonitor
                 await _repository.CloseOpenRunAsync(appId, utcNow);
                 _appRunInfoDictionaryById.Remove(appId);
             }
+
+            _logger.LogInformation($"ScanOnce End {addCount}+ / {toClose?.Count}-");
         }
 
         public async Task BlockOnce(CancellationToken ct)
         {
+            _logger.LogInformation("BlockOnce Start");
+            // Use case-insensitive comparers for Windows file system and process names.
+            var ci = StringComparer.OrdinalIgnoreCase;
 
-            var blockedApps = await _repository.GetBlockedAppsAsync();
+            // HashSet for blocked names (case-insensitive)
+            var blockedNames = new HashSet<string>(ci);
 
-            foreach (var blockItem in blockedApps)
+            var blockedApps = await _repository.GetBlockedAppsAsync().ConfigureAwait(false);
+
+            // Go through all blocked apps 
+            foreach (var blockedApp in blockedApps) 
             {
-
-                if (blockItem.BlockType == 4)
+                // Go through all running apps
+                foreach (var runItem in _appRunInfoDictionaryById)
                 {
-                    foreach (var runItem in _appRunInfoDictionaryById)
+                    // Check for cancellation
+                    if (ct.IsCancellationRequested) break;
+
+                    // Block by Path
+                    if (blockedApp.BlockType == 1)
                     {
-                        if (ct.IsCancellationRequested) break;
-
-                        if (blockItem.BlockValue == runItem.Value.AppId.ToString())
+                        if (string.Equals(blockedApp.BlockValue, runItem.Value.Item2.FullPath, StringComparison.OrdinalIgnoreCase))
                         {
-
-                            AppInfoDto appInfoToBlock = _appInfoDictionaryByPath.Values
-                                .FirstOrDefault(a => a.Id == runItem.Value.AppId);
-
-                            if (appInfoToBlock != null)
-                            {
-                                try
-                                {
-                                    var process = Process.GetProcessesByName(appInfoToBlock.Name);
-                                    foreach (var p in process)
-                                    {
-                                        try
-                                        {
-                                            p.Kill();
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            _logger.LogError(ex, $"Failed to kill process with AppId {runItem.Value.AppId}");
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError(ex, $"Failed to kill process with AppId {runItem.Value.AppId}");
-                                }
-                            }
+                            blockedNames.Add(runItem.Value.Item2.Name);
                         }
-
                     }
+
+                    // Block by App Name
+                    else if (blockedApp.BlockType == 2)
+                    {
+                        if (string.Equals(blockedApp.BlockValue, runItem.Value.Item2.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            blockedNames.Add(runItem.Value.Item2.Name);
+                        }
+                    }
+                    // Block by AppId
+                    else if (blockedApp.BlockType == 4)
+                    {
+                        if (blockedApp.BlockValue == runItem.Value.Item1.AppId.ToString())
+                        {
+                            blockedNames.Add(runItem.Value.Item2.Name);
+                        }
+                    }
+
                 }
             }
 
-
-
-
+            // Now we have a list of blocked process names, we can kill them
+            KillBlockedProcesses(blockedNames, ct);
+            _logger.LogInformation("BlockOnce End");
         }
 
-        private static IEnumerable<ProcessInfoDto> SafeGetProcessesWithUi()
-        {
-            Process[] all;
-            try { all = Process.GetProcesses(); }
-            catch { yield break; }
 
-            foreach (var process in all)
+
+
+        private void KillBlockedProcesses(HashSet<string> blockedNames, CancellationToken ct)
+        {
+            if (blockedNames is null || blockedNames.Count == 0) return;
+
+            Process[] snapshot;
+            try { snapshot = Process.GetProcesses(); }
+            catch (Exception ex)
             {
-                using (process)
+                _logger.LogError(ex, "Failed to enumerate processes.");
+                return;
+            }
+
+            foreach (var proc in snapshot)
+            {
+                
+                if (ct.IsCancellationRequested) break;
+                using (proc)
                 {
-                    IntPtr h = IntPtr.Zero;
-                    string title = null;
+                    string name;
+                    try { name = proc.ProcessName; }
+                    catch { continue; }
+
+                    // HashSet already has case-insensitive comparer
+                    if (!blockedNames.Contains(name)) continue;
 
                     try
                     {
-                        h = process.MainWindowHandle;
-                        title = process.MainWindowTitle;
+                        _logger.LogInformation($"KillBlockedProcesses {proc.ProcessName}");
+                        proc.Kill(); // .NET 4.8: без entireProcessTree
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        continue; /* Skip if no access */
+                        _logger.LogError(ex, "Failed to kill process '{Name}' (PID={Pid}).", name, SafePid(proc));
                     }
-
-                    if (h == IntPtr.Zero || string.IsNullOrWhiteSpace(title))
-                    {
-                        continue;
-                    }
-
-                    var exePath = TryGetExePath(process);
-                    if (exePath == null)
-                    {
-                        continue;
-                    }
-
-                    yield return new ProcessInfoDto
-                    {
-                        ProcessId = process.Id,
-                        Name = process.ProcessName,
-                        FullPath = NormalizePath(exePath),
-                        StartDateTime = process.StartTime,
-                        EndDateTime = null
-                    };
                 }
             }
+
+            static int SafePid(Process p) { try { return p.Id; } catch { return -1; } }
+        }
+
+
+
+        private List<ProcessInfoDto> SafeGetProcessesWithUi()
+        {
+            _logger.LogInformation("SafeGetProcessesWithUi Start");
+            Process[] all = Array.Empty<Process>();
+            List<ProcessInfoDto> result = new List<ProcessInfoDto>();
+            try
+            {
+                all = Process.GetProcesses();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get processes.");
+            }
+
+
+            if (all != null)
+            {
+
+
+                foreach (var process in all)
+                {
+                    using (process)
+                    {
+                        //IntPtr h = IntPtr.Zero;
+                        //string title = null;
+
+                        //try
+                        //{
+                        //    h = process.MainWindowHandle;
+                        //    title = process.MainWindowTitle;
+                        //}
+                        //catch
+                        //{
+                        //    _logger.LogInformation($"SafeGetProcessesWithUi 5 Skip if no access");
+                        //    continue; /* Skip if no access */
+                        //}
+
+                        //if (h == IntPtr.Zero || string.IsNullOrWhiteSpace(title))
+                        //{
+                        //    _logger.LogInformation($"SafeGetProcessesWithUi 6 IntPtr.Zero");
+                        //    continue;
+                        //}
+
+                        var exePath = TryGetExePath(process);
+                        if (exePath == null)
+                        {
+                            continue;
+                        }
+
+                        result.Add(
+                                    new ProcessInfoDto
+                                    {
+                                        ProcessId = process.Id,
+                                        Name = process.ProcessName,
+                                        FullPath = NormalizePath(exePath),
+                                        StartDateTime = process.StartTime,
+                                        EndDateTime = null
+                                    });
+                    }
+                }
+            }
+            _logger.LogInformation($"SafeGetProcessesWithUi End {result.Count}");
+            return result;
         }
 
 
