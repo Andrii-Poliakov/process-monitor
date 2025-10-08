@@ -9,6 +9,17 @@
     <PublishSingleFile>true</PublishSingleFile>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
+  <ItemGroup>
+    <Content Include="..\01_deploy.bat" Link="01_deploy.bat">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\02_install_and_start.bat" Link="02_install_and_start.bat">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\03_uninstall_and_cleanup.bat" Link="03_uninstall_and_cleanup.bat">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Host references both API (controllers) and Blazor client -->
